@@ -37,12 +37,14 @@ parser.add_argument('--url', type=str, default=None, help='URL of PDF file')
 parser.add_argument('--path', type=str, default=None, help='path of PDF file')
 parser.add_argument('--chunk-length', type=int, default=256, help='length of chunks (in tokens) to split the document into')
 parser.add_argument('--num-chunks', type=int, default=10, help='number of chunks to use in a query')
+parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
 args = parser.parse_args()
 
 url = args.url
 path = args.path
 chunk_length = args.chunk_length
 num_chunks = args.num_chunks
+mmr = args.mmr
 
 assert url != path, 'Need to provide either a URL or a path'
 
@@ -70,22 +72,31 @@ vectorstore = get_vectorstore(docs, chunk_length)
 
 log_file = open('log.txt', 'a')
 now = datetime.datetime.now()
-log_file.write('Conversation ended at ' + now.strftime('%Y-%m-%d %H:%M:%S') + ':\n')
+log_file.write('Conversation started at ' + now.strftime('%Y-%m-%d %H:%M:%S') + ':\n')
+
+message_log = []
 
 while True:
     query = input('Q: ')
     if query == 'exit':
         break
-    log_file.write(query + '\n')
+    log_file.write('Q: ' + query + '\n')
 
-    chunks = vectorstore.max_marginal_relevance_search(query=query, k=num_chunks, fetch_k=num_chunks*4)
-    chunks_string = reduce(lambda a, b: a + b, map(lambda c: str(c), chunks))
-    system_message = '\nThe above are relevant segments of a research paper. Do your best to answer the following question using them.'
+    if mmr:
+        chunks = vectorstore.max_marginal_relevance_search(query=query, k=num_chunks, fetch_k=num_chunks*4)
+    else:
+        chunks = vectorstore.similarity_search(query=query, k=num_chunks)
+    chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: [c.page_content], chunks)))
+    system_message = '\nThe above are excerpts of a research paper, followed by previous questions & reponses. Do your best to answer the following question using them.'
     messages = []
-    messages.append({'role': 'system', 'content': chunks_string + system_message})
+    messages.append({'role': 'system', 'content': chunks_string})
+    messages.extend(message_log)
+    messages.append({'role': 'system', 'content': system_message})
     messages.append({'role': 'user', 'content': query})
 
     response = dispatch_chat_completion(messages, model="gpt-4")
+    message_log.append({'role': 'user', 'content': query})
+    message_log.append({'role': 'assistant', 'content': response})
     print('\nA: ' + response + '\n')
     log_file.write('\nA: ' + response + '\n\n')
 
