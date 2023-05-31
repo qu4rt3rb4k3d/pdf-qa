@@ -16,10 +16,10 @@ from langchain.vectorstores import Chroma
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-def dispatch_chat_completion(messages, model):
+def dispatch_chat_completion(messages, model, temperature=0):
     while True:
         try:
-            completion = openai.ChatCompletion.create(messages=messages, model=model)
+            completion = openai.ChatCompletion.create(messages=messages, model=model, temperature=temperature)
             break
         except Exception as e:
             print(repr(e))
@@ -36,7 +36,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--url', type=str, default=None, help='URL of PDF file')
 parser.add_argument('--path', type=str, default=None, help='path of PDF file')
 parser.add_argument('--chunk-length', type=int, default=256, help='length of chunks (in tokens) to split the document into')
-parser.add_argument('--num-chunks', type=int, default=10, help='number of chunks to use in a query')
+parser.add_argument('--num-chunks', type=int, default=8, help='number of chunks to use in a query')
 parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
 args = parser.parse_args()
 
