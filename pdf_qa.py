@@ -13,7 +13,7 @@ from functools import reduce
 from pypdf import PdfReader
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
-from langchain.document_loaders import PyPDFLoader
+from langchain.document_loaders import PyPDFLoader, PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 def dispatch_chat_completion(messages, model, temperature=0):
@@ -34,19 +34,21 @@ def get_vectorstore(docs, chunk_length):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--url', type=str, default=None, help='URL of PDF file')
-parser.add_argument('--path', type=str, default=None, help='path of PDF file')
+parser.add_argument('--file', type=str, default=None, help='path of PDF file')
+parser.add_argument('--dir', type=str, default=None, help='directory of PDF files')
 parser.add_argument('--chunk-length', type=int, default=256, help='length of chunks (in tokens) to split the document into')
 parser.add_argument('--num-chunks', type=int, default=8, help='number of chunks to use in a query')
 parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
 args = parser.parse_args()
 
 url = args.url
-path = args.path
+file_path = args.file
+dir_path = args.dir
 chunk_length = args.chunk_length
 num_chunks = args.num_chunks
 mmr = args.mmr
 
-assert url != path, 'Need to provide either a URL or a path'
+assert sum(map(lambda a: a is not None, [url, file_path, dir_path])) == 1, 'need to provide a URL, a file path, or a directory path'
 
 config_file = open('config.json')
 config = json.loads(config_file.read())
@@ -57,16 +59,21 @@ config_file.close()
 if url:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
     response = requests.get(url, headers=headers)
-    path = '/tmp/paper.pdf'
     if response.headers['Content-Type'] == 'application/pdf':
         with open(path, 'wb') as f:
             f.write(response.content)
     else:
         print('The URL did not return a PDF file')
         exit()
-
-loader = PyPDFLoader(path)
-docs = loader.load()
+    path = '/tmp/paper.pdf'
+    loader = PyPDFLoader(path)
+    docs = loader.load()
+elif file_path:
+    loader = PyPDFLoader(file_path)
+    docs = loader.load()
+elif dir_path:
+    loader = PyPDFDirectoryLoader(dir_path)
+    docs = loader.load()
 
 vectorstore = get_vectorstore(docs, chunk_length)
 
@@ -87,7 +94,9 @@ while True:
     else:
         chunks = vectorstore.similarity_search(query=query, k=num_chunks)
     chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: [c.page_content], chunks)))
-    system_message = '\nThe above are excerpts of a research paper, followed by previous questions & reponses. Do your best to answer the following question using them.'
+    #chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: str(c), chunks)))
+    system_message = '\nThe above are excerpts from one or more research papers, followed by previous questions & reponses. Do your best to answer the following question using them.'
+    #print(chunks_string)
     messages = []
     messages.append({'role': 'system', 'content': chunks_string})
     messages.extend(message_log)
