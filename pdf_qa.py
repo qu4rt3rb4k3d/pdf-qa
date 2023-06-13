@@ -5,71 +5,55 @@ import time
 import datetime
 import sys
 import os
-import asyncio
-import concurrent.futures
 import argparse
 import requests
 import re
 import random
-from typing import Any
 from functools import reduce
 from pypdf import PdfReader
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
+from langchain.document_loaders import PyPDFLoader, PyPDFDirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-def dispatch_chat_completion(messages, model):
+def dispatch_chat_completion(messages, model, temperature=0):
     while True:
         try:
-            completion = openai.ChatCompletion.create(messages=messages, model=model)
+            completion = openai.ChatCompletion.create(messages=messages, model=model, temperature=temperature)
             break
         except Exception as e:
             print(repr(e))
             time.sleep(random.uniform(5, 20))
     return completion.choices[0].message["content"]
 
-def preprocess_text(raw_text, keep_refs):
-    if keep_refs:
-        preprocess_prompt = "Please rewrite the above paper excerpt keeping only the main text and references section. In the references section, keep only the titles of the referenced documents."
-        preprocess_model = "gpt-4"
-    else:
-        preprocess_prompt = "Please rewrite the above paper excerpt keeping only the main text."
-        preprocess_model = "gpt-3.5-turbo"
-
-    tokenizer = tiktoken.encoding_for_model(preprocess_model)
-    tokenized_text = tokenizer.encode(raw_text)
-
-    chunks = []
-    for start in range(0, len(tokenized_text), 2000):
-        end = min(len(tokenized_text), start+2000)
-        chunks.append(tokenizer.decode(tokenized_text[start:end]))
-
-    messages_list = []
-    for chunk in chunks:
-        messages_list.append([
-            {"role": "user", "content": chunk},
-            {"role": "user", "content": preprocess_prompt}
-        ])
-
-    preprocessed_text = ""
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(dispatch_chat_completion, messages, preprocess_model) for messages in messages_list]
-        for future in concurrent.futures.as_completed(futures):
-            preprocessed_text += future.result()
-    return preprocessed_text
+def get_vectorstore(docs, chunk_length):
+    tokenizer = tiktoken.encoding_for_model('gpt-4')
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_length, chunk_overlap=0, length_function=lambda s: len(tokenizer.encode(s)))
+    chunks = text_splitter.split_documents(docs)
+    return Chroma.from_documents(chunks, OpenAIEmbeddings())
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--url", type=str, default=None, help="URL of PDF file")
-parser.add_argument("--path", type=str, default=None, help="path of PDF file")
-parser.add_argument("--keep-refs", action="store_true", help="keep references in filtered text")
+parser.add_argument('--url', type=str, default=None, help='URL of PDF file')
+parser.add_argument('--file', type=str, default=None, help='path of PDF file')
+parser.add_argument('--dir', type=str, default=None, help='directory of PDF files')
+parser.add_argument('--chunk-length', type=int, default=256, help='length of chunks (in tokens) to split the document into')
+parser.add_argument('--num-chunks', type=int, default=8, help='number of chunks to use in a query')
+parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
 args = parser.parse_args()
 
 url = args.url
-path = args.path
-keep_refs = args.keep_refs
+file_path = args.file
+dir_path = args.dir
+chunk_length = args.chunk_length
+num_chunks = args.num_chunks
+mmr = args.mmr
 
-assert url != path, "Need to provide either a URL or a path"
+assert sum(map(lambda a: a is not None, [url, file_path, dir_path])) == 1, 'need to provide a URL, a file path, or a directory path'
 
-config_file = open("config.json")
+config_file = open('config.json')
 config = json.loads(config_file.read())
-openai.api_key = config["OpenAI Key"]
+openai.api_key = config['OpenAI Key']
+os.environ['OPENAI_API_KEY'] = config['OpenAI Key']
 config_file.close()
 
 if url:
@@ -80,47 +64,49 @@ if url:
         with open(path, 'wb') as f:
             f.write(response.content)
     else:
-        print("The URL did not return a PDF file")
+        print('The URL did not return a PDF file')
         exit()
+    loader = PyPDFLoader(path)
+    docs = loader.load()
+elif file_path:
+    loader = PyPDFLoader(file_path)
+    docs = loader.load()
+elif dir_path:
+    loader = PyPDFDirectoryLoader(dir_path)
+    docs = loader.load()
 
-reader = PdfReader(path)
-raw_text = ""
-for page in reader.pages:
-    raw_text += page.extract_text()
+vectorstore = get_vectorstore(docs, chunk_length)
 
-preprocessed_text = preprocess_text(raw_text, keep_refs)
+log_file = open('log.txt', 'a')
+now = datetime.datetime.now()
+log_file.write('Conversation started at ' + now.strftime('%Y-%m-%d %H:%M:%S') + ':\n')
 
-tokenizer = tiktoken.encoding_for_model("gpt-4")
-num_tokens = len(tokenizer.encode(preprocessed_text))
-print(f"Num tokens = {num_tokens}")
-
-messages = [{"role": "user", "content": preprocessed_text}]
+message_log = []
 
 while True:
-    request = input('> ')
-    if request == "exit":
+    query = input('Q: ')
+    if query == 'exit':
         break
-    messages.append({"role": "user", "content": request})
-    while True:
-        try:
-            completion = openai.ChatCompletion.create(
-                model = "gpt-4",
-                temperature = 0,
-                messages = messages
-            )
-            break
-        except Exception as e:
-            print(repr(e))
-            time.sleep(random.uniform(5, 20))
+    log_file.write('Q: ' + query + '\n')
 
-    response = completion.choices[0].message
-    messages.append(response)
-    print(response["content"])
+    if mmr:
+        chunks = vectorstore.max_marginal_relevance_search(query=query, k=num_chunks, fetch_k=num_chunks*4)
+    else:
+        chunks = vectorstore.similarity_search(query=query, k=num_chunks)
+    chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: [c.page_content], chunks)))
+    #chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: str(c), chunks)))
+    system_message = '\nThe above are excerpts from one or more research papers, followed by previous questions & reponses. Do your best to answer the following question using them.'
+    #print(chunks_string)
+    messages = []
+    messages.append({'role': 'system', 'content': chunks_string})
+    messages.extend(message_log)
+    messages.append({'role': 'system', 'content': system_message})
+    messages.append({'role': 'user', 'content': query})
 
-log_file = open("log.txt", "a")
-now = datetime.datetime.now()
-log_file.write("Conversation ended at " + now.strftime("%Y-%m-%d %H:%M:%S") + ":\n")
-for message in messages:
-    log_file.write(str(message) + "\n")
-log_file.write("\n")
+    response = dispatch_chat_completion(messages, model="gpt-4")
+    message_log.append({'role': 'user', 'content': query})
+    message_log.append({'role': 'assistant', 'content': response})
+    print('\nA: ' + response + '\n')
+    log_file.write('\nA: ' + response + '\n\n')
+
 log_file.close()
