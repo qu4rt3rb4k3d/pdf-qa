@@ -59,13 +59,13 @@ config_file.close()
 if url:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
     response = requests.get(url, headers=headers)
+    path = '/tmp/paper.pdf'
     if response.headers['Content-Type'] == 'application/pdf':
         with open(path, 'wb') as f:
             f.write(response.content)
     else:
         print('The URL did not return a PDF file')
         exit()
-    path = '/tmp/paper.pdf'
     loader = PyPDFLoader(path)
     docs = loader.load()
 elif file_path:
