@@ -26,11 +26,16 @@ def dispatch_chat_completion(messages, model, temperature=0):
             time.sleep(random.uniform(5, 20))
     return completion.choices[0].message["content"]
 
-def get_vectorstore(docs, chunk_length):
-    tokenizer = tiktoken.encoding_for_model('gpt-4')
+def get_vectorstore(docs, chunk_length, model):
+    tokenizer = tiktoken.encoding_for_model(model)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_length, chunk_overlap=0, length_function=lambda s: len(tokenizer.encode(s)))
     chunks = text_splitter.split_documents(docs)
     return Chroma.from_documents(chunks, OpenAIEmbeddings())
+
+def get_num_tokens(s, model):
+    tokenizer = tiktoken.encoding_for_model(model)
+    encoded = tokenizer.encode(s)
+    return len(encoded)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--url', type=str, default=None, help='URL of PDF file')
@@ -41,6 +46,7 @@ parser.add_argument('--num-chunks', type=int, default=8, help='number of chunks 
 parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
 parser.add_argument('--no-chunking', action='store_true', help='disable chunking and vectorstore')
 parser.add_argument('--model', type=str, default='gpt-4', help='model to use for QA')
+parser.add_argument('--tokens', action='store_true', help='display the length in tokens of the input document(s)')
 args = parser.parse_args()
 
 url = args.url
@@ -51,6 +57,7 @@ num_chunks = args.num_chunks
 mmr = args.mmr
 chunking = not args.no_chunking
 qa_model = args.model
+show_tokens = args.tokens
 
 assert sum(map(lambda a: a is not None, [url, file_path, dir_path])) == 1, 'need to provide a URL, a file path, or a directory path'
 assert chunking or not dir_path, 'loading multiple documents with chunking disabled is not currently supported'
@@ -81,9 +88,13 @@ elif dir_path:
     docs = loader.load()
 
 if chunking:
-    vectorstore = get_vectorstore(docs, chunk_length)
+    vectorstore = get_vectorstore(docs, chunk_length, qa_model)
 else:
     context_string = reduce(lambda a, b: a + b, map(lambda c: c.page_content, docs))
+
+if show_tokens:
+    doc_string = reduce(lambda a, b: a + b, map(lambda c: c.page_content, docs))
+    print(get_num_tokens(doc_string, qa_model))
 
 log_file = open('log.txt', 'a')
 now = datetime.datetime.now()
