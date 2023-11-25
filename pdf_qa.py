@@ -16,15 +16,15 @@ from langchain.vectorstores import Chroma
 from langchain.document_loaders import PyPDFLoader, PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-def dispatch_chat_completion(messages, model, temperature=0):
+def dispatch_chat_completion(messages, client, model, temperature=0):
     while True:
         try:
-            completion = openai.ChatCompletion.create(messages=messages, model=model, temperature=temperature)
+            response = client.chat.completions.create(messages=messages, model=model, temperature=temperature)
             break
         except Exception as e:
             print(repr(e))
             time.sleep(random.uniform(5, 20))
-    return completion.choices[0].message["content"]
+    return response.choices[0].message.content
 
 def get_vectorstore(docs, chunk_length, model):
     tokenizer = tiktoken.encoding_for_model(model)
@@ -64,7 +64,7 @@ assert chunking or not dir_path, 'loading multiple documents with chunking disab
 
 config_file = open('config.json')
 config = json.loads(config_file.read())
-openai.api_key = config['OpenAI Key']
+client = openai.OpenAI(api_key=config['OpenAI Key'])
 os.environ['OPENAI_API_KEY'] = config['OpenAI Key']
 config_file.close()
 
@@ -115,9 +115,9 @@ while True:
             chunks = vectorstore.similarity_search(query=query, k=num_chunks)
         context_string = str(reduce(lambda a, b: a + b, map(lambda c: [c.page_content], chunks)))
         #chunks_string = str(reduce(lambda a, b: a + b, map(lambda c: str(c), chunks)))
-        system_message = 'The above are excerpts from one or more research papers, followed by previous questions and reponses. Use this to answer the following question.'
+        system_message = 'The above are excerpts from one or more research papers, followed by previous questions and responses. Use this information to answer the following questions.'
     else:
-        system_message = 'The above is a research paper, followed by previous questions and responses. Use this to answer the following question.'
+        system_message = 'The above is a research paper, followed by previous questions and responses. Use this information to answer the following questions.'
 
     messages = []
     messages.append({'role': 'user', 'content': context_string})
@@ -125,7 +125,7 @@ while True:
     messages.append({'role': 'system', 'content': system_message})
     messages.append({'role': 'user', 'content': query})
 
-    response = dispatch_chat_completion(messages, model=qa_model)
+    response = dispatch_chat_completion(messages, client, model=qa_model)
     message_log.append({'role': 'user', 'content': query})
     message_log.append({'role': 'assistant', 'content': response})
     print('\nA: ' + response + '\n')
