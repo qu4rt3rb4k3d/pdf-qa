@@ -44,8 +44,8 @@ parser.add_argument('--dir', type=str, default=None, help='directory of PDF file
 parser.add_argument('--chunk-length', type=int, default=256, help='length of chunks (in tokens) to split the document into')
 parser.add_argument('--num-chunks', type=int, default=8, help='number of chunks to use in a query')
 parser.add_argument('--mmr', action='store_true', help='use maximal marginal relevance search')
-parser.add_argument('--no-chunking', action='store_true', help='disable chunking and vectorstore')
-parser.add_argument('--model', type=str, default='gpt-4', help='model to use for QA')
+parser.add_argument('--chunking', action='store_true', help='disable chunking and vectorstore')
+parser.add_argument('--model', type=str, default='gpt-4-turbo-preview', help='model to use for QA')
 parser.add_argument('--tokens', action='store_true', help='display the length in tokens of the input document(s)')
 parser.add_argument('--batch', type=str, default=None, help='name of batch (enables batch mode if specified)')
 args = parser.parse_args()
@@ -56,7 +56,7 @@ dir_path = args.dir
 chunk_length = args.chunk_length
 num_chunks = args.num_chunks
 mmr = args.mmr
-chunking = not args.no_chunking
+chunking = args.chunking
 qa_model = args.model
 show_tokens = args.tokens
 batch_name = args.batch
